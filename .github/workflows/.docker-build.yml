@@ -1,4 +1,4 @@
-name: Build and Push Docker Image
+name: Build, Push and Deploy Docker Image
 
 # Trigger on push to main branch
 on:
@@ -30,6 +30,7 @@ jobs:
           context: .
           push: true
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/fastapi-app:latest,${{ secrets.DOCKERHUB_USERNAME }}/fastapi-app:${{ github.sha }}
+  
   deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
@@ -43,7 +44,50 @@ jobs:
           key: ${{ secrets.DROPLET_SSH_KEY }}
           passphrase: ${{ secrets.SSH_PASSPHRASE }}
           script: |
-            cd ~/fastapi-app
+            # Create the application directory in /var/www/
+            mkdir -p /var/www/fastapi-app/nginx
+            
+            # Create docker-compose.yml
+            cat > /var/www/fastapi-app/docker-compose.yml << 'EOL'
+            version: '3'
+            
+            services:
+              app:
+                image: ${{ secrets.DOCKERHUB_USERNAME }}/fastapi-app:latest
+                container_name: fastapi-app
+                restart: always
+                expose:
+                  - 8000
+              
+              nginx:
+                image: nginx:latest
+                container_name: nginx
+                ports:
+                  - "80:80"
+                volumes:
+                  - ./nginx:/etc/nginx/conf.d
+                depends_on:
+                  - app
+            EOL
+            
+            # Create nginx config
+            cat > /var/www/fastapi-app/nginx/default.conf << 'EOL'
+            server {
+                listen 80;
+                
+                location / {
+                    proxy_pass http://app:8000;
+                    proxy_set_header Host $host;
+                    proxy_set_header X-Real-IP $remote_addr;
+                    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                }
+            }
+            EOL
+            
+            # Pull the latest image
             docker pull ${{ secrets.DOCKERHUB_USERNAME }}/fastapi-app:latest
-            docker-compose down
+            
+            # Start the containers
+            cd /var/www/fastapi-app
+            docker-compose down --remove-orphans || true
             docker-compose up -d
