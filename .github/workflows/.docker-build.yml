@@ -44,10 +44,14 @@ jobs:
           key: ${{ secrets.DROPLET_SSH_KEY }}
           passphrase: ${{ secrets.SSH_PASSPHRASE }}
           script: |
+            # Check what's using port 80
+            echo "Checking what's using port 80..."
+            sudo lsof -i :80 || true
+            
             # Create the application directory in /var/www/
             mkdir -p /var/www/fastapi-app/nginx
             
-            # Create docker-compose.yml
+            # Create docker-compose.yml with a different port
             cat > /var/www/fastapi-app/docker-compose.yml << 'EOL'
             version: '3'
             
@@ -61,9 +65,9 @@ jobs:
               
               nginx:
                 image: nginx:latest
-                container_name: nginx
+                container_name: nginx-fastapi
                 ports:
-                  - "80:80"
+                  - "8080:80"  # Changed from 80:80 to 8080:80
                 volumes:
                   - ./nginx:/etc/nginx/conf.d
                 depends_on:
@@ -87,7 +91,13 @@ jobs:
             # Pull the latest image
             docker pull ${{ secrets.DOCKERHUB_USERNAME }}/fastapi-app:latest
             
+            # Stop and remove any existing containers with the same names
+            docker stop nginx-fastapi fastapi-app || true
+            docker rm nginx-fastapi fastapi-app || true
+            
             # Start the containers
             cd /var/www/fastapi-app
             docker-compose down --remove-orphans || true
             docker-compose up -d
+            
+            echo "Deployment complete. Your application should be available at http://YOUR_IP:8080"
