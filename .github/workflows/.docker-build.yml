@@ -41,6 +41,7 @@ jobs:
           host: ${{ secrets.DROPLET_IP }}
           username: ${{ secrets.DROPLET_USERNAME }}
           key: ${{ secrets.DROPLET_SSH_KEY }}
+          passphrase: ${{ secrets.SSH_PASSPHRASE }}
           script: |
             cd ~/fastapi-app
             docker pull ${{ secrets.DOCKERHUB_USERNAME }}/fastapi-app:latest
