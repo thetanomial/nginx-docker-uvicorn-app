@@ -52,7 +52,7 @@ jobs:
             mkdir -p /var/www/fastapi-app
             
             # Create docker-compose.yml - only FastAPI app, no Nginx container
-            cat > /var/www/fastapi-app/docker-compose.yml << EOL
+            cat > /var/www/fastapi-app/docker-compose.yml << 'EOFDC'
             version: '3'
             
             services:
@@ -63,33 +63,52 @@ jobs:
                 ports:
                   - "127.0.0.1:8000:8000"  # Only expose to localhost
                 command: uvicorn main:app --host 0.0.0.0 --port 8000
-            EOL
+            EOFDC
             
             # Set up Nginx site configuration for your domain with both HTTP and HTTPS
-            cat > /etc/nginx/sites-available/$DOMAIN << EOL
+            if [ -f /etc/letsencrypt/live/$DOMAIN/fullchain.pem ]; then
+              # SSL certificates exist, configure with HTTPS
+              cat > /etc/nginx/sites-available/$DOMAIN << 'EOFNG'
             server {
                 listen 80;
-                server_name $DOMAIN;
+                server_name ${DOMAIN};
                 # Redirect HTTP to HTTPS
                 location / {
-                    return 301 https://\$host\$request_uri;
+                    return 301 https://$host$request_uri;
                 }
             }
 
             server {
                 listen 443 ssl;
-                server_name $DOMAIN;
-                ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
-                ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
+                server_name ${DOMAIN};
+                ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+                ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
                 location / {
                     proxy_pass http://127.0.0.1:8000;
-                    proxy_set_header Host \$host;
-                    proxy_set_header X-Real-IP \$remote_addr;
-                    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-                    proxy_set_header X-Forwarded-Proto \$scheme;
+                    proxy_set_header Host $host;
+                    proxy_set_header X-Real-IP $remote_addr;
+                    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                    proxy_set_header X-Forwarded-Proto $scheme;
                 }
             }
-            EOL
+            EOFNG
+            else
+              # No SSL certificates yet, configure HTTP only
+              cat > /etc/nginx/sites-available/$DOMAIN << 'EOFNG'
+            server {
+                listen 80;
+                server_name ${DOMAIN};
+                
+                location / {
+                    proxy_pass http://127.0.0.1:8000;
+                    proxy_set_header Host $host;
+                    proxy_set_header X-Real-IP $remote_addr;
+                    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                    proxy_set_header X-Forwarded-Proto $scheme;
+                }
+            }
+            EOFNG
+            fi
             
             # Enable the site by creating a symbolic link
             ln -sf /etc/nginx/sites-available/$DOMAIN /etc/nginx/sites-enabled/
@@ -115,29 +134,8 @@ jobs:
             
             # Add SSL with Certbot (if not already configured)
             if [ ! -f /etc/letsencrypt/live/$DOMAIN/fullchain.pem ]; then
-              # Temporarily replace the SSL config with HTTP-only
-              cat > /etc/nginx/sites-available/$DOMAIN << EOL
-              server {
-                  listen 80;
-                  server_name $DOMAIN;
-                  
-                  location / {
-                      proxy_pass http://127.0.0.1:8000;
-                      proxy_set_header Host \$host;
-                      proxy_set_header X-Real-IP \$remote_addr;
-                      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-                      proxy_set_header X-Forwarded-Proto \$scheme;
-                  }
-              }
-              EOL
-              
-              # Reload Nginx to apply HTTP-only config
-              nginx -t && systemctl reload nginx
-              
-              # Now run certbot to get the certificate
+              # Get SSL certificate
               certbot --nginx -d $DOMAIN --non-interactive --agree-tos --email ${{ secrets.ADMIN_EMAIL }}
-              
-              # Certbot will automatically update the config to include HTTPS
             fi
             
             # Final Nginx reload to apply all changes
