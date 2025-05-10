@@ -5,6 +5,10 @@ services:
     build: .
     container_name: fastapi-app
     restart: always
+    volumes:
+      - ./app:/app/app  # Mount your local app directory to container
+    working_dir: /app/app  # Set the working directory correctly
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload  # No need for cd
     expose:
       - 8000
 
