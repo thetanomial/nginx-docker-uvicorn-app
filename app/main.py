@@ -39,7 +39,11 @@ async def sayWorld():
     return {
         'world' : 'world'
     }
-
+@app.get("/new")
+async def sayWorld():
+    return {
+        'new' : 'new'
+    }
 @app.get("/posts/{post_id}",status_code=status.HTTP_200_OK)  # Changed to GET
 async def read_post(db: db_dependency,post_id: int = Path(gt = 0)):
     post_record = db.query(Posts).filter(Posts.id == post_id).first()
