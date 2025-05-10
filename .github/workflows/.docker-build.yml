@@ -44,61 +44,72 @@ jobs:
           key: ${{ secrets.DROPLET_SSH_KEY }}
           passphrase: ${{ secrets.SSH_PASSPHRASE }}
           script: |
-            # Check what's using port 80
-            echo "Checking what's using port 80..."
-            sudo lsof -i :80 || true
+            # Set domain from GitHub secret
+            DOMAIN="${{ secrets.APP_DOMAIN }}"
+            echo "Deploying to domain: $DOMAIN"
             
             # Create the application directory in /var/www/
-            mkdir -p /var/www/fastapi-app/nginx
+            mkdir -p /var/www/fastapi-app
             
-            # Create docker-compose.yml with a different port
-            cat > /var/www/fastapi-app/docker-compose.yml << 'EOL'
+            # Create docker-compose.yml - only FastAPI app, no Nginx container
+            cat > /var/www/fastapi-app/docker-compose.yml << EOL
             version: '3'
             
             services:
               app:
                 image: ${{ secrets.DOCKERHUB_USERNAME }}/fastapi-app:latest
                 container_name: fastapi-app
-                restart: "no"
-                expose:
-                  - 8000
-                command : uvicorn main:app --host 0.0.0.0 --port 8000
-              
-              nginx:
-                image: nginx:latest
-                container_name: nginx-fastapi
+                restart: always
                 ports:
-                  - "8080:80"  # Changed from 80:80 to 8080:80
-                volumes:
-                  - ./nginx:/etc/nginx/conf.d
-                depends_on:
-                  - app
+                  - "127.0.0.1:8000:8000"  # Only expose to localhost
+                command: uvicorn main:app --host 0.0.0.0 --port 8000
             EOL
             
-            # Create nginx config
-            cat > /var/www/fastapi-app/nginx/default.conf << 'EOL'
+            # Set up Nginx site configuration for your domain
+            cat > /etc/nginx/sites-available/$DOMAIN << EOL
             server {
                 listen 80;
+                server_name $DOMAIN;
                 
                 location / {
-                    proxy_pass http://app:8000;
-                    proxy_set_header Host $host;
-                    proxy_set_header X-Real-IP $remote_addr;
-                    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                    proxy_pass http://127.0.0.1:8000;
+                    proxy_set_header Host \$host;
+                    proxy_set_header X-Real-IP \$remote_addr;
+                    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                    proxy_set_header X-Forwarded-Proto \$scheme;
                 }
             }
             EOL
             
+            # Enable the site by creating a symbolic link
+            ln -sf /etc/nginx/sites-available/$DOMAIN /etc/nginx/sites-enabled/
+            
+            # Check nginx config syntax
+            nginx -t
+            
             # Pull the latest image
             docker pull ${{ secrets.DOCKERHUB_USERNAME }}/fastapi-app:latest
             
-            # Stop and remove any existing containers with the same names
-            docker stop nginx-fastapi fastapi-app || true
-            docker rm nginx-fastapi fastapi-app || true
+            # Stop and remove any existing containers
+            docker stop fastapi-app || true
+            docker rm fastapi-app || true
             
-            # Start the containers
+            # Remove any containers from previous setup
+            docker stop nginx-fastapi || true
+            docker rm nginx-fastapi || true
+            
+            # Start the container
             cd /var/www/fastapi-app
             docker-compose down --remove-orphans || true
             docker-compose up -d
             
-            echo "Deployment complete. Your application should be available at http://YOUR_IP:8080"
+            # Reload Nginx to apply the new configuration
+            systemctl reload nginx
+            
+            # Add SSL with Certbot (if not already configured)
+            if [ ! -f /etc/letsencrypt/live/$DOMAIN/fullchain.pem ]; then
+              certbot --nginx -d $DOMAIN --non-interactive --agree-tos --email ${{ secrets.ADMIN_EMAIL }}
+            fi
+            
+            echo "Deployment complete! Your application should be available at https://$DOMAIN"
+            echo "If you haven't set up DNS yet, please create an A record for $DOMAIN pointing to $(curl -s ifconfig.me)"
