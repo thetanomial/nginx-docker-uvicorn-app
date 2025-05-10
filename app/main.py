@@ -29,6 +29,12 @@ class PostRequest(BaseModel):
 async def read_all(db:db_dependency):
     return db.query(Posts).all()
 
+@app.get("/hello")
+async def sayHello():
+    return {
+        'hello' : 'hello'
+    }
+
 @app.get("/posts/{post_id}",status_code=status.HTTP_200_OK)  # Changed to GET
 async def read_post(db: db_dependency,post_id: int = Path(gt = 0)):
     post_record = db.query(Posts).filter(Posts.id == post_id).first()
